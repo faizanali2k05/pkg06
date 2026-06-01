@@ -1,6 +1,11 @@
 import pandas as pd
 import numpy as np
 
+try:
+    import talib
+except ImportError:  # pragma: no cover - optional production acceleration
+    talib = None
+
 def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
     """
     Calculates the Average True Range (ATR) using Welles Wilder's smoothing.
@@ -16,6 +21,15 @@ def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int
     """
     if len(close) < period:
         return pd.Series(index=close.index, data=float('nan'))
+
+    if talib is not None:
+        values = talib.ATR(
+            high.astype(float).to_numpy(),
+            low.astype(float).to_numpy(),
+            close.astype(float).to_numpy(),
+            timeperiod=period,
+        )
+        return pd.Series(values, index=close.index)
         
     prev_close = close.shift(1)
     

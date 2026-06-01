@@ -1,6 +1,11 @@
 import pandas as pd
 import numpy as np
 
+try:
+    import talib
+except ImportError:  # pragma: no cover - optional production acceleration
+    talib = None
+
 def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """
     Calculates the Relative Strength Index (RSI) of a Pandas Series using Wilder's smoothing.
@@ -14,6 +19,9 @@ def calculate_rsi(series: pd.Series, period: int = 14) -> pd.Series:
     """
     if len(series) < period:
         return pd.Series(index=series.index, data=float('nan'))
+
+    if talib is not None:
+        return pd.Series(talib.RSI(series.astype(float).to_numpy(), timeperiod=period), index=series.index)
         
     delta = series.diff()
     gain = (delta.clip(lower=0)).fillna(0)

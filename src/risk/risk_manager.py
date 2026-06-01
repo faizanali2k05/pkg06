@@ -29,6 +29,24 @@ class RiskManager:
         Raises:
             RiskLimitExceeded: If any risk constraints are breached.
         """
+        if current_equity <= 0:
+            msg = "Order blocked: current equity is zero or negative."
+            logger.warning(msg)
+            raise RiskLimitExceeded(msg, limit_type="equity")
+
+        if proposed_cost <= 0:
+            msg = "Order blocked: proposed order cost is zero or negative."
+            logger.warning(msg)
+            raise RiskLimitExceeded(msg, limit_type="order_cost")
+
+        if proposed_cost > current_equity:
+            msg = (
+                f"Order blocked: proposed cost ({proposed_cost:.2f}) exceeds "
+                f"current equity ({current_equity:.2f})."
+            )
+            logger.warning(msg)
+            raise RiskLimitExceeded(msg, limit_type="order_cost")
+
         # 1. Enforce Maximum Simultaneous Positions
         open_positions = await TradingRepository.get_open_positions(db_session)
         

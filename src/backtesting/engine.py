@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Dict, List, Any, Optional
+from src.core.config import settings
 from src.core.logger import logger
 from src.risk.position_sizing import calculate_position_size
 from src.risk.stop_loss import calculate_sl_tp, update_trailing_stop
@@ -8,10 +9,10 @@ from src.risk.stop_loss import calculate_sl_tp, update_trailing_stop
 class BacktestingEngine:
     """Event-driven historical trading simulation engine matching live WebSocket routing structures."""
 
-    def __init__(self, initial_balance: float = 10000.0, commission_fee: float = 0.001) -> None:
+    def __init__(self, initial_balance: float = 10000.0, commission_fee: float | None = None) -> None:
         self.initial_balance: float = initial_balance
         self.balance: float = initial_balance
-        self.commission_fee: float = commission_fee
+        self.commission_fee: float = settings.COMMISSION_FEE if commission_fee is None else commission_fee
         
         self.trades: List[Dict[str, Any]] = []
         self.equity_history: List[Dict[str, Any]] = []
@@ -96,16 +97,19 @@ class BacktestingEngine:
 
             # 2. Track equity snapshot (cash + unrealized PnL)
             unrealized_pnl = 0.0
+            open_position_value = 0.0
             if self.active_position:
                 pos = self.active_position
                 unrealized_pnl = (curr_price - pos["entry_price"]) * pos["qty"]
+                open_position_value = pos["qty"] * curr_price
                 
-            current_equity = self.balance + unrealized_pnl
+            current_equity = self.balance + open_position_value
             self.equity_history.append({
                 "timestamp": timestamp,
                 "balance": self.balance,
                 "equity": current_equity,
-                "drawdown": (self.initial_balance - current_equity) / self.initial_balance
+                "unrealized_pnl": unrealized_pnl,
+                "drawdown": max(0.0, (self.initial_balance - current_equity) / self.initial_balance)
             })
             
             # 3. Route tick to strategy and process any signals

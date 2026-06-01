@@ -22,7 +22,9 @@ def generate_text_report(results: Dict[str, Any], metrics: Dict[str, Any]) -> st
     lines.append("-" * 65)
     lines.append(f" Total Executed    : {metrics['total_trades']} Trades")
     lines.append(f" Win Rate          : {metrics['win_rate'] * 100:.2f}%")
-    lines.append(f" Profit Factor     : {metrics['profit_factor']:.2f}")
+    profit_factor = metrics.get("profit_factor")
+    profit_factor_text = "No losses" if profit_factor is None else f"{profit_factor:.2f}"
+    lines.append(f" Profit Factor     : {profit_factor_text}")
     lines.append(f" Max Drawdown      : {metrics['max_drawdown_pct'] * 100:.2f}%")
     lines.append(f" Sharpe Ratio      : {metrics['sharpe_ratio']:.2f}")
     lines.append(f" Avg PnL / Trade   : {metrics['avg_trade_pnl']:.2f} USDT")

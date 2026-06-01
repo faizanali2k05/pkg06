@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, JSON
+from sqlalchemy import Column, Integer, String, Float, DateTime, ForeignKey, Boolean, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from src.database.session import Base
@@ -61,3 +61,23 @@ class StrategyState(Base):
     strategy_name = Column(String, unique=True, nullable=False, index=True)
     enabled = Column(Boolean, default=True, nullable=False)
     parameters = Column(JSON, nullable=True)  # Store dynamic indicators limits or overrides
+
+
+class MarketCandle(Base):
+    """Normalized OHLCV candle stream persisted from Binance market data."""
+    __tablename__ = "market_candles"
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", "timestamp", name="uq_market_candle_symbol_tf_ts"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    timeframe = Column(String, nullable=False, index=True)
+    timestamp = Column(DateTime, nullable=False, index=True)
+    open = Column(Float, nullable=False)
+    high = Column(Float, nullable=False)
+    low = Column(Float, nullable=False)
+    close = Column(Float, nullable=False)
+    volume = Column(Float, nullable=False)
+    closed = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

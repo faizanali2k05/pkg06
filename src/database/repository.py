@@ -2,7 +2,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy import select, update, desc
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.database.models import Position, Trade, DailyBalanceHistory, StrategyState
+from src.database.models import DailyBalanceHistory, MarketCandle, Position, StrategyState, Trade
 
 class TradingRepository:
     """Handles async CRUD operations for all trading domain models using SQLAlchemy 2.0 style."""
@@ -208,3 +208,69 @@ class TradingRepository:
             session.add(state)
         await session.flush()
         return state
+
+    @staticmethod
+    async def get_strategy_states(session: AsyncSession) -> List[StrategyState]:
+        result = await session.execute(select(StrategyState).order_by(StrategyState.strategy_name))
+        return list(result.scalars().all())
+
+    # --- MARKET DATA OPERATIONS ---
+    @staticmethod
+    async def upsert_market_candle(
+        session: AsyncSession,
+        symbol: str,
+        timeframe: str,
+        timestamp: datetime,
+        open_price: float,
+        high: float,
+        low: float,
+        close: float,
+        volume: float,
+        closed: bool = True,
+    ) -> MarketCandle:
+        result = await session.execute(
+            select(MarketCandle).where(
+                MarketCandle.symbol == symbol,
+                MarketCandle.timeframe == timeframe,
+                MarketCandle.timestamp == timestamp,
+            )
+        )
+        candle = result.scalar_one_or_none()
+        if candle is None:
+            candle = MarketCandle(
+                symbol=symbol,
+                timeframe=timeframe,
+                timestamp=timestamp,
+                open=open_price,
+                high=high,
+                low=low,
+                close=close,
+                volume=volume,
+                closed=closed,
+            )
+            session.add(candle)
+        else:
+            candle.open = open_price
+            candle.high = high
+            candle.low = low
+            candle.close = close
+            candle.volume = volume
+            candle.closed = closed
+        await session.flush()
+        return candle
+
+    @staticmethod
+    async def get_latest_market_candles(
+        session: AsyncSession,
+        symbol: str,
+        timeframe: str = "1m",
+        limit: int = 200,
+    ) -> List[MarketCandle]:
+        result = await session.execute(
+            select(MarketCandle)
+            .where(MarketCandle.symbol == symbol, MarketCandle.timeframe == timeframe)
+            .order_by(desc(MarketCandle.timestamp))
+            .limit(limit)
+        )
+        candles = list(result.scalars().all())
+        return list(reversed(candles))

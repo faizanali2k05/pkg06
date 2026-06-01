@@ -1,17 +1,23 @@
-import ccxt.async_support as ccxt
+from __future__ import annotations
+
 import time
 import uuid
-from typing import List, Dict, Any, Optional
+from typing import Any, Optional
+
+import ccxt.async_support as ccxt
+
 from src.core.config import settings
-from src.core.logger import logger
 from src.core.exceptions import ExchangeConnectionError, OrderExecutionError
+from src.core.logger import logger
 
 class BinanceClient:
     """Wrapper for async interactions with Binance using CCXT, featuring an integrated dry-run simulator."""
 
     def __init__(self, dry_run: bool = False) -> None:
-        self.dry_run = dry_run or not settings.BINANCE_API_KEY
+        self.dry_run = dry_run or settings.BINANCE_DRY_RUN or not settings.BINANCE_API_KEY
         self.exchange: Optional[ccxt.binance] = None
+        self.simulated_balance: dict[str, dict[str, float]] = {}
+        self.simulated_last_prices: dict[str, float] = {}
 
         if not self.dry_run:
             config = {
@@ -33,9 +39,12 @@ class BinanceClient:
             logger.info(f"Initialized live Binance Exchange Client (Testnet: {settings.BINANCE_USE_TESTNET})")
         else:
             logger.info("Initialized simulated Binance Client in DRY-RUN mode. Real funds are safe.")
-            # Set up mock balance sheets with $10,000 USDT paper cash
-            self.simulated_balance: Dict[str, Any] = {
-                "USDT": {"free": 10000.0, "used": 0.0, "total": 10000.0},
+            self.simulated_balance = {
+                "USDT": {
+                    "free": settings.PAPER_STARTING_BALANCE,
+                    "used": 0.0,
+                    "total": settings.PAPER_STARTING_BALANCE,
+                },
                 "BTC": {"free": 0.0, "used": 0.0, "total": 0.0},
                 "ETH": {"free": 0.0, "used": 0.0, "total": 0.0},
                 "SOL": {"free": 0.0, "used": 0.0, "total": 0.0}
@@ -54,17 +63,16 @@ class BinanceClient:
         if self.exchange:
             await self.exchange.close()
 
-    async def get_balance(self) -> Dict[str, Any]:
+    async def get_balance(self) -> dict[str, Any]:
         """Fetches asset balances across free, used, and total accounts."""
         if self.dry_run:
-            # Reformat to match standard CCXT outputs
             return self._format_mock_balance()
         try:
             return await self.exchange.fetch_balance()
         except Exception as e:
             raise ExchangeConnectionError(f"Failed to fetch account balances from exchange: {e}")
 
-    def _format_mock_balance(self) -> Dict[str, Any]:
+    def _format_mock_balance(self) -> dict[str, Any]:
         res = {"free": {}, "used": {}, "total": {}}
         for coin, details in self.simulated_balance.items():
             res["free"][coin] = details["free"]
@@ -73,7 +81,7 @@ class BinanceClient:
             res[coin] = details
         return res
 
-    async def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 200) -> List[List[Any]]:
+    async def fetch_ohlcv(self, symbol: str, timeframe: str = "1m", limit: int = 200) -> list[list[Any]]:
         """Fetches historical market price candles (OHLCV)."""
         client = self.exchange
         temp_client = None
@@ -84,12 +92,49 @@ class BinanceClient:
         try:
             if temp_client:
                 await temp_client.load_markets()
-            
-            # Reformat symbol if ccxt demands it (e.g. BTC/USDT)
             ohlcv = await client.fetch_ohlcv(symbol, timeframe, limit=limit)
             return ohlcv
         except Exception as e:
             raise ExchangeConnectionError(f"Failed to fetch candlesticks for {symbol}: {e}")
+        finally:
+            if temp_client:
+                await temp_client.close()
+
+    async def fetch_ticker(self, symbol: str) -> dict[str, Any]:
+        """Fetches a real-time ticker snapshot."""
+        client = self.exchange
+        temp_client = None
+        if not client:
+            temp_client = ccxt.binance({"enableRateLimit": True})
+            client = temp_client
+
+        try:
+            if temp_client:
+                await temp_client.load_markets()
+            ticker = await client.fetch_ticker(symbol)
+            if ticker.get("last"):
+                self.simulated_last_prices[symbol] = float(ticker["last"])
+            return ticker
+        except Exception as exc:
+            raise ExchangeConnectionError(f"Failed to fetch ticker for {symbol}: {exc}")
+        finally:
+            if temp_client:
+                await temp_client.close()
+
+    async def fetch_order_book(self, symbol: str, limit: int | None = None) -> dict[str, Any]:
+        """Fetches an order book snapshot from Binance."""
+        client = self.exchange
+        temp_client = None
+        if not client:
+            temp_client = ccxt.binance({"enableRateLimit": True})
+            client = temp_client
+
+        try:
+            if temp_client:
+                await temp_client.load_markets()
+            return await client.fetch_order_book(symbol, limit=limit or settings.ORDER_BOOK_DEPTH)
+        except Exception as exc:
+            raise ExchangeConnectionError(f"Failed to fetch order book for {symbol}: {exc}")
         finally:
             if temp_client:
                 await temp_client.close()
@@ -101,7 +146,7 @@ class BinanceClient:
         order_type: str,
         qty: float,
         price: Optional[float] = None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Submits market or limit orders.
         In dry_run, local variables and order sheets are updated deterministically.
@@ -116,12 +161,13 @@ class BinanceClient:
             if order_type.upper() == "LIMIT" and price is None:
                 raise OrderExecutionError("Limit order requires explicit price.")
             
+            ccxt_price = price if order_type.upper() == "LIMIT" else None
             order = await self.exchange.create_order(
                 symbol=symbol,
                 type=order_type.lower(),
                 side=side.lower(),
                 amount=qty,
-                price=price
+                price=ccxt_price
             )
             return order
         except Exception as e:
@@ -134,13 +180,11 @@ class BinanceClient:
         order_type: str,
         qty: float,
         price: Optional[float] = None
-    ) -> Dict[str, Any]:
-        # Perform dry run balance and price allocations
+    ) -> dict[str, Any]:
         base, quote = symbol.split("/")
-        mock_price = price or 99999.0  # Fallback price
+        mock_price = price or self.simulated_last_prices.get(symbol) or 1.0
         cost = qty * mock_price
 
-        # Safeguard simulated balance lookups
         if quote not in self.simulated_balance:
             self.simulated_balance[quote] = {"free": 0.0, "used": 0.0, "total": 0.0}
         if base not in self.simulated_balance:
@@ -153,7 +197,6 @@ class BinanceClient:
                 raise OrderExecutionError(
                     f"Dry Run balance insufficient. Need {cost:.4f} {quote}, but only have {quote_free:.4f} {quote}"
                 )
-            # Execute allocation updates
             self.simulated_balance[quote]["free"] -= cost
             self.simulated_balance[quote]["total"] -= cost
             self.simulated_balance[base]["free"] += qty
@@ -164,13 +207,13 @@ class BinanceClient:
                 raise OrderExecutionError(
                     f"Dry Run balance insufficient. Need {qty:.4f} {base}, but only have {base_free:.4f} {base}"
                 )
-            # Execute allocation updates
             self.simulated_balance[base]["free"] -= qty
             self.simulated_balance[base]["total"] -= qty
             self.simulated_balance[quote]["free"] += cost
             self.simulated_balance[quote]["total"] += cost
 
-        # Return mockup structure mirroring CCXT API payload
+        self.simulated_last_prices[symbol] = mock_price
+
         return {
             "id": f"dry_order_{uuid.uuid4().hex[:12]}",
             "symbol": symbol,
@@ -181,5 +224,5 @@ class BinanceClient:
             "cost": cost,
             "status": "closed",
             "timestamp": int(time.time() * 1000),
-            "fee": {"cost": cost * 0.001, "currency": quote}  # Standard 0.1% taker fee representation
+            "fee": {"cost": cost * settings.COMMISSION_FEE, "currency": quote}
         }

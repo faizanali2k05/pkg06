@@ -1,42 +1,59 @@
+from __future__ import annotations
+
+import json
 import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from typing import Any
+
 from src.core.config import settings
+
+
+class JsonFormatter(logging.Formatter):
+    """Small structured formatter suitable for container log collectors."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "timestamp": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "logger": record.name,
+            "module": record.module,
+            "file": record.filename,
+            "line": record.lineno,
+            "message": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=True)
+
 
 def setup_logger(name: str = "ApexQuant") -> logging.Logger:
     logger = logging.getLogger(name)
-    logger.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
+    configured_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
+    logger.setLevel(configured_level)
+    logger.propagate = False
     
-    # Avoid duplicate handlers if already configured
     if logger.handlers:
         return logger
 
-    # Log directories
-    log_dir = "logs"
+    log_dir = settings.LOG_DIR
     os.makedirs(log_dir, exist_ok=True)
     
-    # Logging formats
     console_format = logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [%(name)s:%(filename)s:%(lineno)d] - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
-    file_format = logging.Formatter(
-        '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", '
-        '"file": "%(filename)s", "line": %(lineno)d, "message": "%(message)s"}',
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
+    file_format = JsonFormatter(datefmt="%Y-%m-%d %H:%M:%S")
 
-    # Console Handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.DEBUG if settings.DEBUG else logging.INFO)
+    console_handler.setLevel(configured_level)
     console_handler.setFormatter(console_format)
     logger.addHandler(console_handler)
 
-    # Rotating File Handler
     file_handler = RotatingFileHandler(
         filename=os.path.join(log_dir, "app.log"),
-        maxBytes=10 * 1024 * 1024,  # 10MB
+        maxBytes=10 * 1024 * 1024,
         backupCount=5,
         encoding="utf-8"
     )
@@ -44,10 +61,9 @@ def setup_logger(name: str = "ApexQuant") -> logging.Logger:
     file_handler.setFormatter(file_format)
     logger.addHandler(file_handler)
 
-    # Error File Handler
     error_handler = RotatingFileHandler(
         filename=os.path.join(log_dir, "error.log"),
-        maxBytes=5 * 1024 * 1024,  # 5MB
+        maxBytes=5 * 1024 * 1024,
         backupCount=3,
         encoding="utf-8"
     )

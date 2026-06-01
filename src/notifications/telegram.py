@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import httpx
 from src.core.config import settings
 from src.core.logger import logger

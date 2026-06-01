@@ -43,9 +43,9 @@ def calculate_backtest_metrics(
     gross_losses = abs(df_trades[df_trades["net_pnl"] < 0]["net_pnl"].sum())
     
     if gross_losses == 0:
-        profit_factor = float("inf") if gross_profits > 0 else 1.0
+        profit_factor = None if gross_profits > 0 else 0.0
     else:
-        profit_factor = gross_profits / gross_losses
+        profit_factor = float(gross_profits / gross_losses)
 
     # 3. Maximum Drawdown Calculation based on rolling peaks
     equity_series = df_equity["equity"]
