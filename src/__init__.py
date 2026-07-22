@@ -1,1 +1,0 @@
-"""ApexQuant trading platform package."""
